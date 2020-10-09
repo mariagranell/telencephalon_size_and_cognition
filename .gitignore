@@ -1,6 +1,8 @@
 *.png
 *.iml
 .idea
+
+#to remove files
 Figures
 Brain_measurments
 #to ingnore data files
