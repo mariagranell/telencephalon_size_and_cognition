@@ -1,7 +1,14 @@
 *.png
 *.iml
 .idea
+
+
+#to remove files
 Figures
+Brain_measurments
+=======
+Figures
+
 #to ingnore data files
 *.csv
 
