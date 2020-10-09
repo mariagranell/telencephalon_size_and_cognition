@@ -1,0 +1,222 @@
+# Title     : Learning analysis
+# Objective : Analyze the 12 trials
+# Created by: mariagranell
+# Created on: 24/08/2020
+
+library(effects)
+library(ggplot2)
+library(broom)
+library(lme4)
+library(lmerTest) #to get the pvalues ;)
+library(magrittr) # needs to be run every time you start R and want to use %>%
+library(dplyr)    # alternatively, this also loads %>%
+library(car) #for anovas
+
+setwd("~/Library/Mobile Documents/com~apple~CloudDocs/Telencephalon/R_scripts/Problem_solving")
+data <- read.csv("~/Library/Mobile Documents/com~apple~CloudDocs/Telencephalon/R_scripts/Problem_solving/Problem_solving.csv")
+
+
+#redefine the class of each variable
+data <- within(data, {
+  id <- factor(id)
+  replicate <- factor(replicate)
+  selection <- factor(selection) })
+table(data$selection)
+
+
+#for testing the learning time I will remove the bins trials because they give too much variance
+d <- data[data$trial > 2,]
+d<- d[complete.cases(d$time),]
+d$Selection<-ifelse(d$selection == "A", "Down", ifelse(d$selection == "B", "Up","Control"))
+
+#centering the trials. in this way you make sure that the ** in the intercept is not because is = to 0.
+d$trial_centered<-d$trial- 7 #middle trial
+#https://philippmasur.de/2018/05/23/how-to-center-in-multilevel-models/
+#https://statmodeling.stat.columbia.edu/2015/02/19/another-example-centering-predictors-can-good-idea/
+
+##ASSUPTIONS: normality
+hist(log(d$time)) #I transfrom the data with log.
+
+Anova(full.model <- lmer(log(time) ~ selection * trial_centered +
+  (trial_centered | id) + (trial_centered | replicate / selection), data = d,
+                         na.action = na.exclude, control = lmerControl(optimizer = "bobyqa")))
+summary(full.model) #A good model not only needs to fit data well, it also needs to be parsimonious. That is, a good model should be only be as complex as necessary to describe a dataset.
+
+Anova(simple.model <- lmer(log(time) ~ selection + trial_centered +
+  (trial_centered | id) + (trial_centered | replicate), data = d,
+                           na.action = na.exclude, control = lmerControl(optimizer = "bobyqa")))
+
+Anova(simple.model2 <- lmer(log(time) ~ selection + trial_centered +
+  (1 | id) + (1 | replicate), data = d,
+                           na.action = na.exclude, control = lmerControl(optimizer = "bobyqa")))
+
+summary(simple.model2)
+
+## model comparision https://bookdown.org/ndphillips/YaRrr/comparing-regression-models-with-anova.html
+anova(simple.model2, simple.model, type = 3) #the comparision is not significant
+# showing that the interaction did not improve the fit of the model
+
+## model diagnostic
+library(nortest)
+library(gridExtra)
+
+dd <- dotplot(ranef(simple.model2, condVar = TRUE))
+do.call(grid.arrange, c(dd, list(nrow = 1))) #threre is very little for id but theres variaion in replicate, also very little n ## to extract estimates of the random effects
+plot(simple.model2, residuals(.) ~ log(fitted(.))) #ok
+plot(simple.model2) #ok
+plot(resid(simple.model2)) #ok
+lillie.test(resid(simple.model2)) #the p-value > 0.05. The residuals distribution is normal
+qqPlot(resid(simple.model2)) #There are some deviations here, but not enough that I would worry very much. In particular, the distribution is slightly thin-tailed (the smallest residuals are largest than expected, and the largest residuals are smaller than expected), which would make the results slightly conservative (a fat-tailed distribution would make them anticonservative).
+
+# Plot of marginal effects for significant results
+library(emmeans)
+library(ggeffects)
+plot(ggeffect(simple.model2, terms = c("selection")))
+test(emmeans(simple.model2, pairwise ~ selection)) #the comparision between A and B is the significant one
+
+
+## Explained varaince (pseudo-R2 for binomial models) (theoretical R2 for binomial models)
+library(MuMIn) #https://jonlefcheck.net/2013/03/13/r2-for-linear-mixed-effects-models/comment-page-1/
+r.squaredGLMM(simple.model2)
+
+d_mean<-d%>%
+  dplyr::group_by(selection, trial)%>%
+  dplyr::summarize(time=mean(time))
+
+head(d_mean)
+
+darkcolor<-c("#00AFBB","#ff4a00","#ffee00")
+lightcolor<-c("#00AFBB","#FC4E07", "#f5db74")
+
+#first plot
+my_plot<-ggplot(data = d_mean,
+       aes(x = trial,
+           y = time,
+           color = selection,
+           shape= selection)) +
+  ylab("Time to enter the cup (s)")+ xlab("Trial")+
+  geom_hline(yintercept=600, linetype="longdash")+
+  geom_hline(yintercept=240, linetype="dashed")+
+  scale_color_manual(name = " Selection lines",
+                     labels = c("Down", "Up", "Control"),
+                     values = darkcolor) +
+  scale_shape_manual(name = " Selection lines",
+                     labels = c("Down", "Up", "Control"),
+                     values=c(16,17,15)) +
+  scale_fill_manual(values = darkcolor,
+                    labels= NULL,
+                    guide= FALSE)+
+  geom_smooth(method = loess,
+              se = T,
+              size = 0.7,
+              linetype = 1,
+              alpha = .15,
+              aes(fill=selection))+
+  geom_point(size = 3) +
+  #labs(title    = "",
+  #subtitle = "")+
+  scale_x_continuous(breaks = 3:12)+
+  scale_y_reverse()+
+  theme_classic(base_size = 16)
+
+my_plot + theme_update(panel.background = element_blank(),
+panel.grid.major = element_blank(),
+panel.grid.minor = element_blank(),
+axis.line = element_line(colour = "black"),
+legend.justification = c(1, 0), legend.position = c(0.9, 0.3),
+legend.background = element_blank(),
+legend.box.background = element_blank(),
+legend.key = element_blank(),
+axis.title=element_text(size=16),
+legend.title=element_text(size=16),
+legend.text=element_text(size=16))
+
+
+my_plot+ guides(color=guide_legend(override.aes=list(fill=NA)))
+
+my_plot+ theme_update(legend.justification = c(1, 0), legend.position = c(0.9, 0.3))
+
+
+theme_update(#panel.background = element_blank(),
+#panel.grid.major = element_line(colour = "grey90"),
+#panel.grid.minor = element_line(colour = "grey98"),
+#axis.line = element_line(colour = "black"),
+legend.justification = c(1, 0), legend.position = c(0.9, 0.3),
+#legend.background = element_blank(),
+#legend.box.background = element_blank(),
+legend.key = element_blank(),
+axis.title=element_text(size=13),
+legend.title=element_text(size=13),
+legend.text=element_text(size=13))
+
+#END PERFORMANCE LEVELS------------------------------
+
+head(d)
+dA<-d[d$selection=="A",]
+dend<-dA[dA$trial>8,]
+dend$trial_centered<-dend$trial- 10 #middle trial
+
+dB<-d[d$selection=="B",]
+dend<-dB[dB$trial>8,]
+dend$trial_centered<-dend$trial- 9 #middle trial
+
+Anova(full.model <- lmer(log(time) ~ trial_centered +
+  (1 | id) + (1 | replicate), data = dend,
+                         na.action = na.exclude, control = lmerControl(optimizer = "bobyqa")))
+summary(full.model)
+r.squaredGLMM(full.model)
+
+dend<-d[d$trial>8,]
+dend$trial_centered<-dend$trial- 10 #middle trial
+
+Anova(simple.model2 <- lmer(log(time) ~ Selection + trial_centered +
+  (1 | id) + (1 | replicate / Selection), data = dend,
+                         na.action = na.exclude, control = lmerControl(optimizer = "bobyqa")))
+summary(simple.model2)
+r.squaredGLMM(simple.model2)
+
+dend<- dend[complete.cases(d$time),]
+summarySE(data = dend, groupvars = c("selection"), conf.interval = 0.95, .drop = TRUE,
+          measurevar = "time", na.rm = T)
+
+##second plot--------------------------------------------
+
+
+d$Selection<-ifelse(d$selection == "A", "Down", ifelse(d$selection == "B", "Up","Control"))
+
+Anova(simple.model <- lmer(time ~ selection + trial_centered +
+  (trial_centered | id) + (trial_centered | replicate), data = d,
+                           na.action = na.exclude, control = lmerControl(optimizer = "bobyqa")))
+
+
+
+m <- lmer(log(time) ~ trial_centered * Selection + (1|id) , data = d,
+          na.action = na.exclude, control=lmerControl(optimizer="bobyqa"))
+Anova(m, type = 3)
+
+m_fit <- effect("trial_centered * Selection", m, xlevels = 10) %>%
+  as.data.frame()
+
+m_means <- d%>%
+  filter(!is.na(time)) %>%
+  group_by(trial, Selection) %>%
+  summarize(mean_choice = mean(time))
+
+m_plot<-ggplot(m_means, aes(x=trial, y= mean_choice, colour = Selection, shape=Selection)) +
+  geom_point(size = 3.5)+
+  geom_line(data = m_fit, aes(trial_centered+7, fit))  +
+  geom_ribbon(data = m_fit, col = NA, alpha = 0.15, size = 4,
+              aes(trial_centered+7, NULL, ymin = lower, ymax = upper, fill=Selection)) +
+  scale_fill_manual(values=c("#00AFBB", "#fc4e07","#f5db74")) +
+  labs(x = "Trials",y="Time to success")+
+  scale_x_continuous(breaks=3:12)+
+  scale_y_reverse()+
+  geom_hline(yintercept=600, linetype="longdash", alpha= 1)+
+  geom_hline(yintercept=240, linetype="dashed", alpha=1)+
+  scale_colour_manual(values=c("#00AFBB", "#fc4e07","#f5db74")) +
+  ylim(700,0)+
+  theme_classic(base_size = 16)
+
+
+m_plot+ theme_update(legend.justification = c(1, 0),
+                     legend.position = c(0.9, 0.3))
